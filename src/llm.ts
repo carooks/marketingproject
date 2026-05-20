@@ -78,12 +78,13 @@ export class AzureOpenAIProvider implements LLMProvider {
 
 // --- Mock internals ---------------------------------------------------------
 
-type AgentRole = 'analyst' | 'planner' | 'drafter' | 'critic' | 'reviser' | 'director' | 'coordinator';
+type AgentRole = 'analyst' | 'planner' | 'drafter' | 'critic' | 'reviser' | 'director' | 'coordinator' | 'chaddy';
 
 function detectRole(system: string): AgentRole {
   const s = system.toLowerCase();
-  if (s.includes('content director') || s.includes('orchestrator')) return 'director';
+  if (s.includes('chaddy')) return 'chaddy';
   if (s.includes('coherence') || s.includes('coordinator')) return 'coordinator';
+  if (s.includes('content director') || s.includes('orchestrator')) return 'director';
   if (s.includes('content strategist') || s.includes('analyst')) return 'analyst';
   if (s.includes('planner')) return 'planner';
   if (s.includes('critic')) return 'critic';
@@ -99,7 +100,8 @@ const mockResponses: Record<AgentRole, (req: LLMRequest) => unknown> = {
   critic: (req) => mockCritique(req.user),
   reviser: (req) => mockRevision(req.user),
   director: (req) => mockDirectorPlan(req.user),
-  coordinator: (req) => mockCoherenceReport(req.user)
+  coordinator: (req) => mockCoherenceReport(req.user),
+  chaddy: (req) => mockChaddyReply(req.user)
 };
 
 function mockAnalystBrief(userPrompt: string): SourceBrief {
@@ -391,4 +393,95 @@ function renderChannelDraft(id: FormatId, b: SourceBrief): string {
         `CTA: ${b.suggestedCTA}.`
       ].join('\n');
   }
+}
+
+// ============== Chaddy =====================================================
+// Conversational marketing strategist that drafts brand-aligned source content
+// the user can hand off to the agent pipeline.
+function mockChaddyReply(userPrompt: string): string {
+  const latest = extractBlock(userPrompt, 'LATEST').trim() || userPrompt.trim();
+  const lower = latest.toLowerCase();
+
+  const wantsDraft = /draft|write|create|generate|post|article|piece|copy|long.?form/.test(lower);
+  const wantsIdeas = /idea|brainstorm|angle|topic|suggest/.test(lower);
+  const wantsOutline = /outline|structure|skeleton|sections?/.test(lower);
+  const isGreeting = /^(hi|hey|hello|yo|sup|good (morning|afternoon))\b/.test(lower);
+
+  const topic = extractTopic(latest);
+
+  if (isGreeting && latest.length < 40) {
+    return [
+      `Hey — I'm Chaddy, your OneDigital marketing strategist.`,
+      ``,
+      `Tell me what you want to talk about (a workforce trend, a client win, an upcoming benefits change), and I'll help you draft a long-form post you can hand off to the agent pipeline on the right.`,
+      ``,
+      `Try: "Draft a post about AI in HR" or "Give me 3 angles on open enrollment."`
+    ].join('\n');
+  }
+
+  if (wantsIdeas) {
+    return [
+      `Here are three angles on ${topic} that line up with our voice:`,
+      ``,
+      `1. **The practical lens** — what HR leaders can actually do this quarter, not next year. Emphasize trusted guidance and practical solutions.`,
+      `2. **The people-decisions lens** — how this shapes employee experience and workforce strategy, not just process.`,
+      `3. **The risk-aware lens** — what to watch for, where human judgment still has to lead, and how to measure value.`,
+      ``,
+      `Want me to draft one of these into a full post?`
+    ].join('\n');
+  }
+
+  if (wantsOutline) {
+    return [
+      `Here's an outline on ${topic} we can build from:`,
+      ``,
+      `1. **Hook** — the workforce shift leaders are feeling right now.`,
+      `2. **What's actually changing** — 2-3 concrete examples grounded in people decisions.`,
+      `3. **Why it matters** — the business impact and employee experience trade-offs.`,
+      `4. **A trusted path forward** — practical solutions, technology-enabled support, human judgment in the loop.`,
+      `5. **Call to action** — Talk with an advisor about your next step.`,
+      ``,
+      `Say the word and I'll draft the full post.`
+    ].join('\n');
+  }
+
+  if (wantsDraft || latest.length > 60) {
+    return chaddyDraftPost(topic, latest);
+  }
+
+  return [
+    `Got it. On "${topic}" — I can help you in a few ways:`,
+    ``,
+    `• Draft a full long-form post (say "draft a post")`,
+    `• Brainstorm 2-3 angles (say "give me ideas")`,
+    `• Sketch an outline first (say "outline this")`,
+    ``,
+    `Which one?`
+  ].join('\n');
+}
+
+function extractTopic(msg: string): string {
+  const m = msg.match(/(?:about|on|regarding|for|covering)\s+(.{4,80}?)(?:[.?!]|$)/i);
+  if (m) return m[1].trim();
+  const firstLine = msg.split(/[.\n?!]/)[0] || msg;
+  return firstLine.replace(/^(draft|write|create|generate|give me|suggest)\s+(a |an |some |me |an? )?/i, '').trim() || 'this topic';
+}
+
+function chaddyDraftPost(topic: string, userMsg: string): string {
+  const t = topic.charAt(0).toUpperCase() + topic.slice(1);
+  return [
+    `Here's a draft long-form post on **${t}** — written in OneDigital voice. When it looks right, click "Send to pipeline" and the agents will repurpose it for every channel.`,
+    ``,
+    `---`,
+    ``,
+    `# ${t}: What workforce leaders should actually do next`,
+    ``,
+    `The conversation around ${topic} has moved fast, and most HR and benefits leaders are being asked to make people decisions with incomplete information. The pressure is real, but the opportunity is bigger: this is a moment to strengthen workforce strategy, not just react to it.`,
+    ``,
+    `Three patterns are showing up in the organizations getting this right. First, they treat ${topic} as part of a connected HR strategy rather than a single project — benefits, compliance, and employee experience are decided together, not in silos. Second, they pair technology-enabled support with human judgment; automation handles the repeatable work, advisors handle the nuanced calls. Third, they measure value in terms employees actually feel: time saved, clarity gained, confidence restored.`,
+    ``,
+    `What stays constant is the principle that ${userMsg ? 'employees are the strategy, not a line item' : 'people decisions deserve the same rigor as financial ones'}. The teams that lead through this period will be the ones who combine practical solutions, trusted guidance, and a risk-aware approach — and who keep human-centered innovation at the core of every decision.`,
+    ``,
+    `If you're weighing how to move forward on ${topic} in your organization, talk with an advisor about your next step. We help employers build a more resilient workforce, one practical decision at a time.`
+  ].join('\n');
 }

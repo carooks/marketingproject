@@ -1,7 +1,8 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { ApprovalStatus, AuditEntry, Draft, FormatId, FORMATS, QualityCheck } from './types';
 import { AgentEvent, AgentStepKind, CoherenceReport, DirectorPlan, runAgenticPipeline } from './agent';
 import { BRAND } from './brand';
+import { askChaddy, ChaddyMessage } from './chaddy';
 import { extractPdfText } from './pdf';
 
 const SAMPLE = `The future of B2B marketing isn't more content — it's more leverage from the content you already have. Most teams pour weeks into a single thought leadership piece, then publish it once and move on. The highest-performing teams treat every long-form post as a source asset that fuels a dozen downstream artifacts: social posts, sales one-pagers, newsletter sections, and internal enablement. The shift is operational, not creative. It requires a repeatable system that turns one input into many outputs, with human judgment in the loop at every step. This week we break down how to build that system without losing brand voice.`;
@@ -179,8 +180,9 @@ export default function App() {
             <div className="brand-eyebrow">OneDigital · Marketing</div>
             <h1>Content Repurposer</h1>
             <p className="subtitle">
-              Upload one long-form post. A team of AI agents drafts every channel
-              in OneDigital voice. You review and approve — nothing publishes automatically.
+              Chat with Chaddy to draft or upload a long-form post, then a team of six AI agents
+              repurposes it into LinkedIn, Twitter, email, sales one-pager, Instagram, and internal
+              comms — all in OneDigital voice. You review and approve; nothing publishes automatically.
             </p>
           </div>
         </div>
@@ -190,6 +192,19 @@ export default function App() {
       <BrandCard />
       <ScopeCard />
 
+      <div className="split">
+        <ChaddyPanel
+          onSendToPipeline={(text, t) => {
+            setSource(text);
+            if (t) setTitle(t);
+            // scroll right side into view
+            setTimeout(() => {
+              document.getElementById('pipeline-col')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 50);
+          }}
+        />
+
+        <div className="pipeline-col" id="pipeline-col">
       <section className="panel">
         <div className="panel-header">
           <h2>1. Source content</h2>
@@ -399,6 +414,8 @@ export default function App() {
           )}
         </section>
       )}
+        </div>
+      </div>
 
       <footer className="footer muted">
         Powered by a mock LLM provider for the prototype. Swap{' '}
@@ -968,5 +985,157 @@ function BrandCard() {
         </div>
       )}
     </div>
+  );
+}
+
+// ============== Chaddy chat panel ===========================================
+function ChaddyPanel({ onSendToPipeline }: { onSendToPipeline: (text: string, title?: string) => void }) {
+  const [messages, setMessages] = useState<ChaddyMessage[]>([
+    {
+      id: 'm0',
+      role: 'chaddy',
+      content:
+        "Hey, I'm Chaddy, your OneDigital marketing strategist. I help you turn one idea or document into a complete cross-channel content set.\n\nHere's how it works: once you have a long-form post you're happy with, the agent team on the right repurposes it into all six formats your marketing program needs:\n\n  • LinkedIn post — for thought leadership and brand reach\n  • Twitter / X thread — for bite-sized distribution\n  • Email newsletter — for nurture and retention\n  • Sales ROI one-pager — for advisor and sales conversations\n  • Instagram carousel — for visual social storytelling\n  • Internal comms summary — to align your own team\n\nTry uploading a PDF (📎 below) to translate your content for all of your social media needs, or just tell me what you want to write about and I'll draft it with you.",
+      timestamp: Date.now()
+    }
+  ]);
+  const [input, setInput] = useState('');
+  const [thinking, setThinking] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, thinking]);
+
+  async function send() {
+    const text = input.trim();
+    if (!text || thinking) return;
+    const userMsg: ChaddyMessage = { id: `u${Date.now()}`, role: 'user', content: text, timestamp: Date.now() };
+    setMessages([...messages, userMsg]);
+    setInput('');
+    setThinking(true);
+    try {
+      const reply = await askChaddy(messages, text);
+      setMessages((prev) => [...prev, { id: `c${Date.now()}`, role: 'chaddy', content: reply, timestamp: Date.now() }]);
+    } catch (err) {
+      console.error(err);
+      setMessages((prev) => [...prev, { id: `e${Date.now()}`, role: 'chaddy', content: 'Sorry, something went wrong on my end. Try again?', timestamp: Date.now() }]);
+    } finally {
+      setThinking(false);
+    }
+  }
+
+  async function handleUpload(file: File) {
+    if (thinking) return;
+    if (!/\.pdf$/i.test(file.name)) {
+      setUploadStatus('Only PDF files are supported.');
+      return;
+    }
+    setUploadStatus(`Parsing ${file.name}...`);
+    try {
+      const { text, pages } = await extractPdfText(file);
+      setUploadStatus(null);
+      const displayMsg = `Uploaded ${file.name} (${pages} page${pages === 1 ? '' : 's'}, ${text.length.toLocaleString()} characters). Please summarize the key points and suggest 3 angles I could use for a long-form OneDigital post.`;
+      const promptForChaddy = `I just uploaded a document called "${file.name}". Summarize the key points and suggest 3 angles I could use for a long-form post about this topic.\n\n<DOCUMENT>\n${text.slice(0, 12000)}\n</DOCUMENT>`;
+      const userMsg: ChaddyMessage = { id: `u${Date.now()}`, role: 'user', content: displayMsg, timestamp: Date.now() };
+      setMessages((prev) => [...prev, userMsg]);
+      setThinking(true);
+      try {
+        const reply = await askChaddy(messages, promptForChaddy);
+        setMessages((prev) => [...prev, { id: `c${Date.now()}`, role: 'chaddy', content: reply, timestamp: Date.now() }]);
+      } finally {
+        setThinking(false);
+      }
+    } catch (err) {
+      console.error(err);
+      setUploadStatus(`Could not parse ${file.name}.`);
+    }
+  }
+
+  function extractDraft(content: string): { body: string; title?: string } {
+    const idx = content.indexOf('---');
+    const body = idx >= 0 ? content.slice(idx + 3).trim() : content.trim();
+    const titleMatch = body.match(/^#\s+(.+)$/m);
+    return { body, title: titleMatch?.[1] };
+  }
+
+  return (
+    <aside className="chaddy-col">
+      <div className="chaddy-head">
+        <div className="chaddy-avatar" aria-hidden>??</div>
+        <div>
+          <strong>Chaddy</strong>
+          <div className="muted small">Brainstorm &amp; draft source content</div>
+        </div>
+        <span className="pill pill-pending" style={{ marginLeft: 'auto' }}>Mock agent</span>
+      </div>
+
+      <div className="chaddy-messages" ref={scrollRef}>
+        {messages.map((m) => {
+          const isDraft = m.role === 'chaddy' && m.content.includes('---');
+          const { body, title } = isDraft ? extractDraft(m.content) : { body: m.content, title: undefined };
+          return (
+            <div key={m.id} className={`chaddy-msg chaddy-msg-${m.role}`}>
+              <div className="chaddy-msg-body">{m.content}</div>
+              {isDraft && (
+                <button
+                  className="primary chaddy-handoff"
+                  type="button"
+                  onClick={() => onSendToPipeline(body, title)}
+                >
+                  ? Send to pipeline
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {thinking && (
+          <div className="chaddy-msg chaddy-msg-chaddy">
+            <div className="chaddy-msg-body chaddy-typing">
+              <span /><span /><span />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {uploadStatus && <div className="chaddy-status">{uploadStatus}</div>}
+
+      <div className="chaddy-input">
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/pdf,.pdf"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) handleUpload(f);
+            e.currentTarget.value = '';
+          }}
+        />
+        <button
+          className="ghost chaddy-clip"
+          type="button"
+          title="Upload a PDF"
+          onClick={() => fileRef.current?.click()}
+          disabled={thinking}
+        >
+          📎
+        </button>
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+          }}
+          placeholder='Try: "Draft a post about AI in HR", or upload a PDF'
+          rows={2}
+        />
+        <button className="primary" type="button" onClick={send} disabled={!input.trim() || thinking}>
+          {thinking ? '�' : 'Send'}
+        </button>
+      </div>
+    </aside>
   );
 }
