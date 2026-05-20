@@ -622,6 +622,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   flex-wrap: wrap;
 }
 .export-bar .muted { color: var(--slate-600); font-size: 13px; }
+.export-actions { display: flex; gap: 8px; align-items: center; }
 
 /* =========================================================================
    Director (orchestrator) card + coherence report
@@ -1159,3 +1160,19 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .chaddy-clip:hover:not(:disabled) { background: var(--brand-50); }
 .chaddy-clip:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.chaddy-doc-actions {
+  margin-top: 12px;
+  padding: 14px;
+  background: linear-gradient(135deg, var(--brand-50), #fff);
+  border: 1px solid var(--brand-200, var(--brand-100));
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.chaddy-doc-actions-head { display: flex; flex-direction: column; gap: 2px; }
+.chaddy-doc-actions .primary { width: 100%; text-align: left; }
+.chaddy-doc-actions .ghost.small {
+  align-self: flex-end; font-size: 12px; padding: 4px 10px;
+}

@@ -402,6 +402,13 @@ function mockChaddyReply(userPrompt: string): string {
   const latest = extractBlock(userPrompt, 'LATEST').trim() || userPrompt.trim();
   const lower = latest.toLowerCase();
 
+  // If the user uploaded a document, summarize what we actually see in it.
+  const docMatch = latest.match(/<DOCUMENT>([\s\S]*?)<\/DOCUMENT>/i);
+  if (docMatch) {
+    const fileMatch = latest.match(/called\s+"([^"]+)"/i);
+    return chaddyDocumentReply(docMatch[1], fileMatch?.[1] || 'your document');
+  }
+
   const wantsDraft = /draft|write|create|generate|post|article|piece|copy|long.?form/.test(lower);
   const wantsIdeas = /idea|brainstorm|angle|topic|suggest/.test(lower);
   const wantsOutline = /outline|structure|skeleton|sections?/.test(lower);
@@ -411,7 +418,7 @@ function mockChaddyReply(userPrompt: string): string {
 
   if (isGreeting && latest.length < 40) {
     return [
-      `Hey — I'm Chaddy, your OneDigital marketing strategist.`,
+      `Hey ï¿½ I'm Chaddy, your OneDigital marketing strategist.`,
       ``,
       `Tell me what you want to talk about (a workforce trend, a client win, an upcoming benefits change), and I'll help you draft a long-form post you can hand off to the agent pipeline on the right.`,
       ``,
@@ -423,9 +430,9 @@ function mockChaddyReply(userPrompt: string): string {
     return [
       `Here are three angles on ${topic} that line up with our voice:`,
       ``,
-      `1. **The practical lens** — what HR leaders can actually do this quarter, not next year. Emphasize trusted guidance and practical solutions.`,
-      `2. **The people-decisions lens** — how this shapes employee experience and workforce strategy, not just process.`,
-      `3. **The risk-aware lens** — what to watch for, where human judgment still has to lead, and how to measure value.`,
+      `1. **The practical lens** ï¿½ what HR leaders can actually do this quarter, not next year. Emphasize trusted guidance and practical solutions.`,
+      `2. **The people-decisions lens** ï¿½ how this shapes employee experience and workforce strategy, not just process.`,
+      `3. **The risk-aware lens** ï¿½ what to watch for, where human judgment still has to lead, and how to measure value.`,
       ``,
       `Want me to draft one of these into a full post?`
     ].join('\n');
@@ -435,11 +442,11 @@ function mockChaddyReply(userPrompt: string): string {
     return [
       `Here's an outline on ${topic} we can build from:`,
       ``,
-      `1. **Hook** — the workforce shift leaders are feeling right now.`,
-      `2. **What's actually changing** — 2-3 concrete examples grounded in people decisions.`,
-      `3. **Why it matters** — the business impact and employee experience trade-offs.`,
-      `4. **A trusted path forward** — practical solutions, technology-enabled support, human judgment in the loop.`,
-      `5. **Call to action** — Talk with an advisor about your next step.`,
+      `1. **Hook** ï¿½ the workforce shift leaders are feeling right now.`,
+      `2. **What's actually changing** ï¿½ 2-3 concrete examples grounded in people decisions.`,
+      `3. **Why it matters** ï¿½ the business impact and employee experience trade-offs.`,
+      `4. **A trusted path forward** ï¿½ practical solutions, technology-enabled support, human judgment in the loop.`,
+      `5. **Call to action** ï¿½ Talk with an advisor about your next step.`,
       ``,
       `Say the word and I'll draft the full post.`
     ].join('\n');
@@ -450,11 +457,11 @@ function mockChaddyReply(userPrompt: string): string {
   }
 
   return [
-    `Got it. On "${topic}" — I can help you in a few ways:`,
+    `Got it. On "${topic}" ï¿½ I can help you in a few ways:`,
     ``,
-    `• Draft a full long-form post (say "draft a post")`,
-    `• Brainstorm 2-3 angles (say "give me ideas")`,
-    `• Sketch an outline first (say "outline this")`,
+    `ï¿½ Draft a full long-form post (say "draft a post")`,
+    `ï¿½ Brainstorm 2-3 angles (say "give me ideas")`,
+    `ï¿½ Sketch an outline first (say "outline this")`,
     ``,
     `Which one?`
   ].join('\n');
@@ -470,7 +477,7 @@ function extractTopic(msg: string): string {
 function chaddyDraftPost(topic: string, userMsg: string): string {
   const t = topic.charAt(0).toUpperCase() + topic.slice(1);
   return [
-    `Here's a draft long-form post on **${t}** — written in OneDigital voice. When it looks right, click "Send to pipeline" and the agents will repurpose it for every channel.`,
+    `Here's a draft long-form post on **${t}** ï¿½ written in OneDigital voice. When it looks right, click "Send to pipeline" and the agents will repurpose it for every channel.`,
     ``,
     `---`,
     ``,
@@ -478,10 +485,76 @@ function chaddyDraftPost(topic: string, userMsg: string): string {
     ``,
     `The conversation around ${topic} has moved fast, and most HR and benefits leaders are being asked to make people decisions with incomplete information. The pressure is real, but the opportunity is bigger: this is a moment to strengthen workforce strategy, not just react to it.`,
     ``,
-    `Three patterns are showing up in the organizations getting this right. First, they treat ${topic} as part of a connected HR strategy rather than a single project — benefits, compliance, and employee experience are decided together, not in silos. Second, they pair technology-enabled support with human judgment; automation handles the repeatable work, advisors handle the nuanced calls. Third, they measure value in terms employees actually feel: time saved, clarity gained, confidence restored.`,
+    `Three patterns are showing up in the organizations getting this right. First, they treat ${topic} as part of a connected HR strategy rather than a single project ï¿½ benefits, compliance, and employee experience are decided together, not in silos. Second, they pair technology-enabled support with human judgment; automation handles the repeatable work, advisors handle the nuanced calls. Third, they measure value in terms employees actually feel: time saved, clarity gained, confidence restored.`,
     ``,
-    `What stays constant is the principle that ${userMsg ? 'employees are the strategy, not a line item' : 'people decisions deserve the same rigor as financial ones'}. The teams that lead through this period will be the ones who combine practical solutions, trusted guidance, and a risk-aware approach — and who keep human-centered innovation at the core of every decision.`,
+    `What stays constant is the principle that ${userMsg ? 'employees are the strategy, not a line item' : 'people decisions deserve the same rigor as financial ones'}. The teams that lead through this period will be the ones who combine practical solutions, trusted guidance, and a risk-aware approach ï¿½ and who keep human-centered innovation at the core of every decision.`,
     ``,
     `If you're weighing how to move forward on ${topic} in your organization, talk with an advisor about your next step. We help employers build a more resilient workforce, one practical decision at a time.`
   ].join('\n');
+}
+
+// Reads the uploaded <DOCUMENT> block and produces a summary + 3 angles + draft offer.
+function chaddyDocumentReply(rawDoc: string, fileName: string): string {
+  const cleaned = rawDoc.replace(/\s+/g, ' ').trim();
+  if (cleaned.length < 40) {
+    return `I opened **${fileName}** but couldn't pull readable text out of it. If it's a scanned image PDF, try a text-based version or paste the content into the chat.`;
+  }
+  const sentences = cleaned
+    .split(/(?<=[.!?])\s+(?=[A-Z"'])/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 30 && s.length < 320);
+
+  const stop = new Set([
+    'the','and','for','that','with','this','from','have','will','your','are','was','been','were',
+    'their','they','them','our','you','but','not','can','any','all','one','two','more','than',
+    'these','those','also','into','about','which','what','when','how','who','why','its','an','to',
+    'of','in','on','is','as','be','or','at','by','we','do','if','so','up','out','no','yes','has',
+    'had','would','should','could','may','might','very','just','only','most','some','such','each'
+  ]);
+  const wordCounts = new Map<string, number>();
+  const matches = cleaned.toLowerCase().match(/[a-z][a-z-]{3,}/g);
+  if (matches) {
+    for (const w of matches) {
+      if (!stop.has(w)) wordCounts.set(w, (wordCounts.get(w) ?? 0) + 1);
+    }
+  }
+  const topWords = [...wordCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map((e) => e[0]);
+
+  const scored = sentences
+    .map((s) => {
+      const lower = s.toLowerCase();
+      let score = 0;
+      for (const w of topWords) if (lower.includes(w)) score++;
+      return { s, score };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const bullets = scored.slice(0, 4).map((x) => x.s.replace(/^[\s\-â€¢]+/, '').trim());
+  const headline = (sentences[0] || cleaned.slice(0, 180)).trim();
+  const theme = topWords.slice(0, 3).join(', ') || 'this topic';
+
+  const lines: string[] = [];
+  lines.push(`Thanks â€” I read **${fileName}** (${cleaned.length.toLocaleString()} characters of extractable text). Here's what I'm seeing.`);
+  lines.push('');
+  lines.push(`**The gist:** ${headline}`);
+  lines.push('');
+  if (bullets.length > 0) {
+    lines.push(`**Key points I pulled out:**`);
+    bullets.forEach((b, i) => lines.push(`${i + 1}. ${b}`));
+    lines.push('');
+  }
+  lines.push(`**Recurring themes:** ${theme}.`);
+  lines.push('');
+  lines.push(`**Three angles you could turn this into:**`);
+  lines.push(`1. **The practical lens** â€” how HR and benefits leaders should act on ${topWords[0] || 'this'} this quarter, with trusted guidance and practical solutions.`);
+  lines.push(`2. **The people-decisions lens** â€” what ${topWords[1] || 'this'} means for workforce strategy and employee experience.`);
+  lines.push(`3. **The risk-aware lens** â€” where human judgment still has to lead on ${topWords[2] || 'this'}, and how to measure value responsibly.`);
+  lines.push('');
+  lines.push(`Want me to draft one of these into a full long-form post? Say something like "draft the practical lens" or "write angle 2".`);
+  lines.push('');
+  lines.push(`Or skip the long-form draft entirely â€” use the **"Send PDF to pipeline"** button below to repurpose this document straight into all six channel formats: LinkedIn post, Twitter / X thread, email newsletter, sales ROI one-pager, Instagram carousel, and internal comms summary.`);
+  return lines.join('\n');
 }

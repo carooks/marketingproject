@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/agent.ts","./src/brand.ts","./src/chaddy.ts","./src/llm.ts","./src/main.tsx","./src/pdf.ts","./src/types.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/agent.ts","./src/brand.ts","./src/chaddy.ts","./src/llm.ts","./src/main.tsx","./src/pdf.ts","./src/pdfexport.ts","./src/types.ts"],"version":"5.9.3"}

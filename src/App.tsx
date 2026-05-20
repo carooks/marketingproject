@@ -4,6 +4,7 @@ import { AgentEvent, AgentStepKind, CoherenceReport, DirectorPlan, runAgenticPip
 import { BRAND } from './brand';
 import { askChaddy, ChaddyMessage } from './chaddy';
 import { extractPdfText } from './pdf';
+import { exportDraftToPdf, exportPackageToPdf } from './pdfExport';
 
 const SAMPLE = `The future of B2B marketing isn't more content — it's more leverage from the content you already have. Most teams pour weeks into a single thought leadership piece, then publish it once and move on. The highest-performing teams treat every long-form post as a source asset that fuels a dozen downstream artifacts: social posts, sales one-pagers, newsletter sections, and internal enablement. The shift is operational, not creative. It requires a repeatable system that turns one input into many outputs, with human judgment in the loop at every step. This week we break down how to build that system without losing brand voice.`;
 
@@ -732,6 +733,13 @@ function DraftEditor({
         >
           Copy to clipboard
         </button>
+        <button
+          className="ghost"
+          type="button"
+          onClick={() => exportDraftToPdf(draft)}
+        >
+          ⬇ Export PDF
+        </button>
       </div>
     </div>
   );
@@ -833,7 +841,7 @@ function chipClass(s: ApprovalStatus) {
 
 function ExportBar({ drafts }: { drafts: Draft[] }) {
   const approved = drafts.filter((d) => d.status === 'approved');
-  function exportApproved() {
+  function exportApprovedJson() {
     const payload = { exportedAt: new Date().toISOString(), drafts: approved };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -849,14 +857,24 @@ function ExportBar({ drafts }: { drafts: Draft[] }) {
         {approved.length} of {drafts.length} approved. Nothing is auto-posted —
         export the package and hand it to the channel owners.
       </span>
-      <button
-        type="button"
-        className="primary"
-        disabled={approved.length === 0}
-        onClick={exportApproved}
-      >
-        Export approved package (.json)
-      </button>
+      <div className="export-actions">
+        <button
+          type="button"
+          className="ghost"
+          disabled={approved.length === 0}
+          onClick={exportApprovedJson}
+        >
+          .json
+        </button>
+        <button
+          type="button"
+          className="primary"
+          disabled={approved.length === 0}
+          onClick={() => exportPackageToPdf(approved)}
+        >
+          ⬇ Export approved package (PDF)
+        </button>
+      </div>
     </div>
   );
 }
@@ -1002,6 +1020,7 @@ function ChaddyPanel({ onSendToPipeline }: { onSendToPipeline: (text: string, ti
   const [input, setInput] = useState('');
   const [thinking, setThinking] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const [uploadedDoc, setUploadedDoc] = useState<{ name: string; text: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -1037,8 +1056,9 @@ function ChaddyPanel({ onSendToPipeline }: { onSendToPipeline: (text: string, ti
     try {
       const { text, pages } = await extractPdfText(file);
       setUploadStatus(null);
+      setUploadedDoc({ name: file.name, text });
       const displayMsg = `Uploaded ${file.name} (${pages} page${pages === 1 ? '' : 's'}, ${text.length.toLocaleString()} characters). Please summarize the key points and suggest 3 angles I could use for a long-form OneDigital post.`;
-      const promptForChaddy = `I just uploaded a document called "${file.name}". Summarize the key points and suggest 3 angles I could use for a long-form post about this topic.\n\n<DOCUMENT>\n${text.slice(0, 12000)}\n</DOCUMENT>`;
+      const promptForChaddy = `I just uploaded a document called "${file.name}". Summarize the key points, suggest 3 angles for a long-form post, AND remind me that I can repurpose this same document directly into all six channel formats (LinkedIn, Twitter / X, email newsletter, sales ROI one-pager, Instagram carousel, internal comms) using the button you'll show me below the summary.\n\n<DOCUMENT>\n${text.slice(0, 12000)}\n</DOCUMENT>`;
       const userMsg: ChaddyMessage = { id: `u${Date.now()}`, role: 'user', content: displayMsg, timestamp: Date.now() };
       setMessages((prev) => [...prev, userMsg]);
       setThinking(true);
@@ -1096,6 +1116,31 @@ function ChaddyPanel({ onSendToPipeline }: { onSendToPipeline: (text: string, ti
             <div className="chaddy-msg-body chaddy-typing">
               <span /><span /><span />
             </div>
+          </div>
+        )}
+        {uploadedDoc && !thinking && (
+          <div className="chaddy-doc-actions">
+            <div className="chaddy-doc-actions-head">
+              <strong>Repurpose <em>{uploadedDoc.name}</em> for every channel</strong>
+              <span className="muted small">The agent team on the right will draft all six formats from this document. Nothing publishes automatically.</span>
+            </div>
+            <button
+              className="primary"
+              type="button"
+              onClick={() => {
+                onSendToPipeline(uploadedDoc.text, uploadedDoc.name.replace(/\.pdf$/i, ''));
+              }}
+            >
+              → Send PDF to pipeline (LinkedIn, Twitter, Email, Sales ROI, Instagram, Internal)
+            </button>
+            <button
+              className="ghost small"
+              type="button"
+              onClick={() => setUploadedDoc(null)}
+              title="Hide these options"
+            >
+              Dismiss
+            </button>
           </div>
         )}
       </div>
