@@ -5,6 +5,7 @@ import { BRAND } from './brand';
 import { askChaddy, ChaddyMessage } from './chaddy';
 import { extractPdfText } from './pdf';
 import { exportDraftToPdf, exportPackageToPdf } from './pdfExport';
+import { detectChannelIntent, chaddyExport } from './chaddyExport';
 
 const SAMPLE = `The future of B2B marketing isn't more content — it's more leverage from the content you already have. Most teams pour weeks into a single thought leadership piece, then publish it once and move on. The highest-performing teams treat every long-form post as a source asset that fuels a dozen downstream artifacts: social posts, sales one-pagers, newsletter sections, and internal enablement. The shift is operational, not creative. It requires a repeatable system that turns one input into many outputs, with human judgment in the loop at every step. This week we break down how to build that system without losing brand voice.`;
 
@@ -1007,6 +1008,24 @@ function BrandCard() {
 }
 
 // ============== Chaddy chat panel ===========================================
+function pickExportSource(
+  messages: ChaddyMessage[],
+  uploadedDoc: { name: string; text: string } | null
+): { text: string; name?: string } | null {
+  // Prefer the most recent long-form draft Chaddy wrote (contains '---' separator).
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role === 'chaddy' && m.content.includes('---')) {
+      const idx = m.content.indexOf('---');
+      const body = m.content.slice(idx + 3).trim();
+      const titleMatch = body.match(/^#\s+(.+)$/m);
+      return { text: body, name: titleMatch?.[1] };
+    }
+  }
+  if (uploadedDoc) return { text: uploadedDoc.text, name: uploadedDoc.name.replace(/\.pdf$/i, '') };
+  return null;
+}
+
 function ChaddyPanel({ onSendToPipeline }: { onSendToPipeline: (text: string, title?: string) => void }) {
   const [messages, setMessages] = useState<ChaddyMessage[]>([
     {
@@ -1034,6 +1053,41 @@ function ChaddyPanel({ onSendToPipeline }: { onSendToPipeline: (text: string, ti
     const userMsg: ChaddyMessage = { id: `u${Date.now()}`, role: 'user', content: text, timestamp: Date.now() };
     setMessages([...messages, userMsg]);
     setInput('');
+
+    // Explicit PDF export request → bypasses the agent approval pipeline.
+    const intent = detectChannelIntent(text);
+    if (intent) {
+      const source = pickExportSource(messages, uploadedDoc);
+      if (!source) {
+        setMessages((prev) => [...prev, {
+          id: `c${Date.now()}`, role: 'chaddy',
+          content: "I don't have anything to export yet. Upload a PDF or ask me to draft a post first, then say something like \"export this as a PDF\" or \"give me a LinkedIn PDF\".",
+          timestamp: Date.now()
+        }]);
+        return;
+      }
+      setThinking(true);
+      try {
+        const result = await chaddyExport(source.text, intent, source.name);
+        const targetLabel = intent === 'all'
+          ? `all six channels (${result.channels.join(', ')})`
+          : result.channels[0];
+        setMessages((prev) => [...prev, {
+          id: `c${Date.now()}`, role: 'chaddy',
+          content:
+            `Done — exported ${result.count === 1 ? 'a PDF' : `${result.count} PDFs`} for **${targetLabel}** straight to your downloads.\n\n` +
+            `⚠️ **Heads up:** because you asked for this directly, I skipped the agent review pipeline (no critic, no coherence check, no director sign-off). The PDF carries a flag noting this. For production use, send the source through the pipeline on the right and approve each channel before exporting.`,
+          timestamp: Date.now()
+        }]);
+      } catch (err) {
+        console.error(err);
+        setMessages((prev) => [...prev, { id: `e${Date.now()}`, role: 'chaddy', content: 'Sorry — the PDF export hit an error. Check the console and try again.', timestamp: Date.now() }]);
+      } finally {
+        setThinking(false);
+      }
+      return;
+    }
+
     setThinking(true);
     try {
       const reply = await askChaddy(messages, text);

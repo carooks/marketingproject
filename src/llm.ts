@@ -556,5 +556,7 @@ function chaddyDocumentReply(rawDoc: string, fileName: string): string {
   lines.push(`Want me to draft one of these into a full long-form post? Say something like "draft the practical lens" or "write angle 2".`);
   lines.push('');
   lines.push(`Or skip the long-form draft entirely — use the **"Send PDF to pipeline"** button below to repurpose this document straight into all six channel formats: LinkedIn post, Twitter / X thread, email newsletter, sales ROI one-pager, Instagram carousel, and internal comms summary.`);
+  lines.push('');
+  lines.push(`If you just need a quick PDF and don't want the full review pipeline, ask me directly — e.g. *"export this as a LinkedIn PDF"* or *"give me a PDF for all six channels"*. Just know that path skips the critic, coherence, and director review.`);
   return lines.join('\n');
 }
