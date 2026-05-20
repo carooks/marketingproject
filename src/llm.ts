@@ -1,0 +1,394 @@
+// Minimal LLM provider abstraction.
+//
+// The whole app talks to LLMs only through `LLMProvider`. To switch from the
+// mock to a real model, change ONE line in `src/generator.ts`:
+//     const provider = new MockLLMProvider();      // <- swap this
+//     const provider = new AzureOpenAIProvider({...});
+//
+// No other file needs to change.
+
+import { FormatId } from './types';
+
+export interface LLMRequest {
+  system: string;
+  user: string;
+  /** Hint the model to return JSON. Mock + real providers honor this. */
+  json?: boolean;
+  temperature?: number;
+}
+
+export interface LLMResponse<T = string> {
+  content: T;
+  model: string;
+  tokensIn: number;
+  tokensOut: number;
+  latencyMs: number;
+}
+
+export interface LLMProvider {
+  name: string;
+  model: string;
+  complete<T = string>(req: LLMRequest): Promise<LLMResponse<T>>;
+}
+
+// --- Mock provider ----------------------------------------------------------
+// Pretends to be a real LLM. Inspects the system prompt to decide what kind of
+// structured response to return. This is what lets the rest of the app behave
+// exactly as it will against a real model.
+
+export class MockLLMProvider implements LLMProvider {
+  name = 'mock';
+  model = 'mock-gpt-4o';
+
+  async complete<T = string>(req: LLMRequest): Promise<LLMResponse<T>> {
+    const started = performance.now();
+    // Simulate realistic per-call latency (400–1200ms).
+    await wait(400 + Math.random() * 800);
+
+    const role = detectRole(req.system);
+    const content = mockResponses[role](req);
+
+    return {
+      content: content as T,
+      model: this.model,
+      tokensIn: approxTokens(req.system + req.user),
+      tokensOut: approxTokens(typeof content === 'string' ? content : JSON.stringify(content)),
+      latencyMs: Math.round(performance.now() - started)
+    };
+  }
+}
+
+// --- Real provider stub -----------------------------------------------------
+// Drop-in shape for an Azure OpenAI / OpenAI implementation. Not wired in the
+// prototype — kept here to make the swap obvious.
+
+export class AzureOpenAIProvider implements LLMProvider {
+  name = 'azure-openai';
+  model: string;
+  constructor(_opts: { endpoint: string; apiKey: string; deployment: string }) {
+    this.model = _opts.deployment;
+  }
+  async complete<T = string>(_req: LLMRequest): Promise<LLMResponse<T>> {
+    throw new Error(
+      'AzureOpenAIProvider is a stub. Implement fetch() to ' +
+        `${this.model} and return { content, tokensIn, tokensOut, latencyMs }.`
+    );
+  }
+}
+
+// --- Mock internals ---------------------------------------------------------
+
+type AgentRole = 'analyst' | 'planner' | 'drafter' | 'critic' | 'reviser' | 'director' | 'coordinator';
+
+function detectRole(system: string): AgentRole {
+  const s = system.toLowerCase();
+  if (s.includes('content director') || s.includes('orchestrator')) return 'director';
+  if (s.includes('coherence') || s.includes('coordinator')) return 'coordinator';
+  if (s.includes('content strategist') || s.includes('analyst')) return 'analyst';
+  if (s.includes('planner')) return 'planner';
+  if (s.includes('critic')) return 'critic';
+  if (s.includes('reviser')) return 'reviser';
+  return 'drafter';
+}
+
+// Each role returns shape-stable content the pipeline expects.
+const mockResponses: Record<AgentRole, (req: LLMRequest) => unknown> = {
+  analyst: (req) => mockAnalystBrief(req.user),
+  planner: (req) => mockPlan(req.user),
+  drafter: (req) => mockDraft(req.user),
+  critic: (req) => mockCritique(req.user),
+  reviser: (req) => mockRevision(req.user),
+  director: (req) => mockDirectorPlan(req.user),
+  coordinator: (req) => mockCoherenceReport(req.user)
+};
+
+function mockAnalystBrief(userPrompt: string): SourceBrief {
+  const body = stripPromptScaffolding(userPrompt);
+  const sentences = splitSentences(body);
+  const keyPoints = rankByLength(sentences, 5);
+  const stats = sentences.filter((s) => /\d/.test(s)).slice(0, 3);
+  return {
+    title: deriveTitle(sentences),
+    thesis: sentences[0] ?? '',
+    audience: 'HR, benefits, and people-operations leaders at mid-size to enterprise organizations',
+    tone: 'professional, clear, confident, practical, human',
+    keyPoints,
+    stats,
+    pullQuote: longest(sentences) ?? '',
+    suggestedCTA: 'Talk with an advisor about your next step'
+  };
+}
+
+function mockPlan(userPrompt: string): ChannelPlan {
+  const formatId = extractTag(userPrompt, 'FORMAT') as FormatId;
+  const briefJson = extractBlock(userPrompt, 'BRIEF');
+  const brief = safeParse<SourceBrief>(briefJson);
+  const points = brief?.keyPoints ?? [];
+  return {
+    formatId,
+    hook: brief?.thesis ?? '',
+    structure: [
+      'Open with the strongest contrarian framing',
+      ...points.slice(0, 3).map((p) => `Make the point: "${truncate(p, 60)}"`),
+      'Close with a clear CTA'
+    ],
+    cta: brief?.suggestedCTA ?? 'Read the full post'
+  };
+}
+
+function mockDraft(userPrompt: string): string {
+  const formatId = extractTag(userPrompt, 'FORMAT') as FormatId;
+  const briefJson = extractBlock(userPrompt, 'BRIEF');
+  const brief = safeParse<SourceBrief>(briefJson);
+  if (!brief) return '';
+  return renderChannelDraft(formatId, brief);
+}
+
+function mockCritique(userPrompt: string): Critique {
+  const draft = extractBlock(userPrompt, 'DRAFT');
+  const issues: string[] = [];
+  const firstLine = draft.split('\n')[0] ?? '';
+  if (firstLine.length > 140) issues.push('Hook is too long — trim to a single tight line.');
+  if (!/[?!]/.test(firstLine)) issues.push('Hook lacks tension — try a question or bold claim.');
+  if (!/cta|read|book|sign up|link/i.test(draft)) issues.push('CTA is weak or missing.');
+  if (issues.length === 0) issues.push('Looks solid. Tighten one transition for flow.');
+  return { issues: issues.slice(0, 3), severity: issues.length > 1 ? 'medium' : 'low' };
+}
+
+function mockRevision(userPrompt: string): string {
+  const draft = extractBlock(userPrompt, 'DRAFT');
+  const lines = draft.split('\n');
+  if (lines[0] && lines[0].length > 140) {
+    lines[0] = truncate(lines[0], 120);
+  }
+  let joined = lines.join('\n');
+  // OneDigital brand cleanup: strip avoided phrases (mock substitute).
+  const avoidedReplacements: Array<[RegExp, string]> = [
+    [/\bAI will replace HR\b/gi, 'AI can support HR teams, but human judgment remains essential'],
+    [/\bfully automated people decisions\b/gi, 'technology-enabled people decisions'],
+    [/\bguaranteed compliance\b/gi, 'a risk-aware approach to compliance'],
+    [/\binstant transformation\b/gi, 'practical, measurable change'],
+    [/\brevolutionary disruption\b/gi, 'practical innovation'],
+    [/\bset it and forget it\b/gi, 'ongoing, advisor-supported'],
+    [/\bmagic\b/gi, 'practical value'],
+    [/\bone-size-fits-all\b/gi, 'scalable, context-aware']
+  ];
+  for (const [pat, sub] of avoidedReplacements) joined = joined.replace(pat, sub);
+  if (!/talk with an advisor|build a more resilient|workforce planning|connected hr strategy|prepare your organization|read the full|link in bio|book a|→/i.test(joined)) {
+    joined = joined.trimEnd() + '\n\nTalk with an advisor about your next step.';
+  }
+  return joined;
+}
+
+function mockDirectorPlan(userPrompt: string): DirectorPlan {
+  const formatsRaw = extractTag(userPrompt, 'FORMATS');
+  const ids = formatsRaw.split(',').map((s) => s.trim()).filter(Boolean) as FormatId[];
+  const priorityRank: FormatId[] = ['linkedin', 'email', 'roiOnePager', 'twitter', 'instagram', 'internal'];
+  const ordered = [...ids].sort((a, b) => priorityRank.indexOf(a) - priorityRank.indexOf(b));
+  const rationales: Record<FormatId, string> = {
+    linkedin: 'Highest reach for B2B thought leadership; sets the narrative.',
+    twitter: 'Fast distribution and amplification once the LinkedIn post lands.',
+    email: 'Owned audience — captures intent from people already opted in.',
+    roiOnePager: 'Equips sales to convert the warm leads the social posts generate.',
+    instagram: 'Top-of-funnel brand surface; visual entry point for new audiences.',
+    internal: 'Aligns the company so external messaging is reinforced consistently.'
+  };
+  return {
+    strategy: 'Lead with LinkedIn + email for demand, follow with sales enablement and visual top-of-funnel.',
+    channels: ordered.map((id, i) => ({
+      formatId: id,
+      rationale: rationales[id] ?? 'Engage channel agent.',
+      priority: i < 2 ? 'high' : i < 4 ? 'medium' : 'low'
+    }))
+  };
+}
+
+function mockCoherenceReport(userPrompt: string): CoherenceReport {
+  const formatsRaw = extractTag(userPrompt, 'FORMATS');
+  const ids = formatsRaw.split(',').map((s) => s.trim()).filter(Boolean) as FormatId[];
+  const drafts = extractBlock(userPrompt, 'DRAFTS');
+  const notes: string[] = [];
+  if (ids.includes('linkedin') && ids.includes('twitter')) {
+    notes.push('LinkedIn hook and Twitter opener share the same framing — good narrative consistency.');
+  }
+  if (ids.includes('email')) {
+    notes.push('Email CTA points to the blog; confirm the URL is the canonical post, not a redirect.');
+  }
+  if (ids.includes('roiOnePager')) {
+    notes.push('ROI one-pager uses sales language; loop in RevOps before sending to sellers.');
+  }
+  if (ids.includes('instagram')) {
+    notes.push('Instagram slides will need design pass — copy is ready, visuals are not.');
+  }
+  if (!/\{\{blog_url\}\}/.test(drafts)) {
+    notes.push('No placeholder URL detected; double-check links before approving.');
+  }
+  if (notes.length === 0) notes.push('Drafts look internally consistent.');
+  return {
+    notes: notes.slice(0, 5),
+    verdict: notes.length > 3 ? 'minor-edits' : 'ready',
+    publishOrder: ids
+  };
+}
+
+// --- Shared types used by the pipeline + mock -------------------------------
+
+export interface SourceBrief {
+  title: string;
+  thesis: string;
+  audience: string;
+  tone: string;
+  keyPoints: string[];
+  stats: string[];
+  pullQuote: string;
+  suggestedCTA: string;
+}
+
+export interface ChannelPlan {
+  formatId: FormatId;
+  hook: string;
+  structure: string[];
+  cta: string;
+}
+
+export interface Critique {
+  issues: string[];
+  severity: 'low' | 'medium' | 'high';
+}
+
+export interface DirectorPlan {
+  /** Channels the director chose to engage, in delegation order. */
+  channels: { formatId: FormatId; rationale: string; priority: 'high' | 'medium' | 'low' }[];
+  /** A single sentence describing the overall content play. */
+  strategy: string;
+}
+
+export interface CoherenceReport {
+  /** Cross-channel consistency notes the marketer should know. */
+  notes: string[];
+  /** Overall verdict the director gives the batch. */
+  verdict: 'ready' | 'minor-edits' | 'rework';
+  /** Suggested order to publish in. */
+  publishOrder: FormatId[];
+}
+
+// --- Utilities --------------------------------------------------------------
+
+function wait(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
+function approxTokens(s: string) { return Math.ceil(s.length / 4); }
+
+function splitSentences(text: string): string[] {
+  return text.replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s+/).filter(Boolean);
+}
+function rankByLength(arr: string[], n: number) {
+  return [...arr].sort((a, b) => b.length - a.length).slice(0, n);
+}
+function longest(arr: string[]) {
+  return arr.length ? arr.reduce((a, b) => (b.length > a.length ? b : a)) : undefined;
+}
+function deriveTitle(sentences: string[]) {
+  const first = sentences[0] ?? 'Untitled';
+  return first.length > 80 ? first.slice(0, 77) + '…' : first;
+}
+function truncate(s: string, n: number) { return s.length <= n ? s : s.slice(0, n - 1) + '…'; }
+
+function stripPromptScaffolding(s: string) {
+  return s.replace(/<[A-Z_]+>[\s\S]*?<\/[A-Z_]+>/g, (m) => m.replace(/<\/?[A-Z_]+>/g, '')).trim();
+}
+function extractTag(s: string, name: string): string {
+  const m = s.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`));
+  return m ? m[1].trim() : '';
+}
+function extractBlock(s: string, name: string): string {
+  return extractTag(s, name);
+}
+function safeParse<T>(s: string): T | null {
+  try { return JSON.parse(s) as T; } catch { return null; }
+}
+
+// Channel-specific drafters used by the mock drafter agent.
+function renderChannelDraft(id: FormatId, b: SourceBrief): string {
+  const k = b.keyPoints;
+  switch (id) {
+    case 'linkedin':
+      return [
+        b.thesis,
+        '',
+        `Here is what we are seeing in workforce strategy today 👇`,
+        '',
+        ...k.map((p, i) => `${i + 1}. ${p}`),
+        '',
+        `The opportunity is not replacing expertise — it is scaling it with trusted guidance and practical solutions.`,
+        '',
+        `${b.suggestedCTA}. What people decisions is your team weighing right now?`
+      ].join('\n');
+    case 'twitter': {
+      const tweets: string[] = [`1/ ${truncate(b.thesis, 275)}`];
+      k.forEach((p, i) => tweets.push(truncate(`${i + 2}/ ${p}`, 275)));
+      tweets.push(truncate(`${tweets.length + 1}/ ${b.suggestedCTA}.`, 275));
+      return tweets.join('\n\n');
+    }
+    case 'email':
+      return [
+        `Subject: ${b.title}`,
+        `Preview: ${truncate(b.thesis, 90)}`,
+        '',
+        `Hi {{firstName}},`,
+        '',
+        b.thesis,
+        '',
+        `A few practical takeaways for your workforce strategy this quarter:`,
+        ...k.map((p) => `  • ${p}`),
+        '',
+        `${b.suggestedCTA} → {{advisor_url}}`,
+        '',
+        `— OneDigital`
+      ].join('\n');
+    case 'roiOnePager':
+      return [
+        `## ${b.title}`,
+        '',
+        `**Business problem**`,
+        b.thesis,
+        '',
+        `**Why it matters for people decisions**`,
+        k[0] ?? '',
+        '',
+        `**Value signals (from the source)**`,
+        ...(b.stats.length > 0 ? b.stats.map((s) => `- ${s}`) : ['- [Add a supported metric from your engagement before sending.]']),
+        '',
+        `**Discovery questions for the conversation**`,
+        `- How is your team approaching this today?`,
+        `- What would measurable value look like in 6 months?`,
+        `- Where does technology-enabled support fit your roadmap?`,
+        '',
+        `**Sales talk track**`,
+        `"We help employers make confident people decisions by combining expert guidance, practical strategy, and modern technology."`,
+        '',
+        `**Next step**: Talk with an advisor about your next step.`
+      ].join('\n');
+    case 'instagram': {
+      const slides = [
+        { t: 'Slide 1 — Hook', c: truncate(b.thesis, 120) },
+        ...k.slice(0, 4).map((p, i) => ({ t: `Slide ${i + 2} — Key idea`, c: truncate(p, 140) })),
+        { t: 'Slide 6 — CTA', c: 'Talk with an advisor about your next step — link in bio.' }
+      ];
+      return slides.map((s) => `${s.t}\n${s.c}`).join('\n\n') +
+        '\n\nAlt text: clean enterprise visual featuring people-centered workplace imagery.';
+    }
+    case 'internal':
+      return [
+        `**TL;DR for the team**`,
+        '',
+        `What: ${b.title}`,
+        `Why it matters: ${truncate(b.thesis, 200)}`,
+        `Audience: ${b.audience}`,
+        '',
+        `Key points:`,
+        ...k.slice(0, 3).map((p) => `  • ${truncate(p, 160)}`),
+        '',
+        `Suggested use: share with one prospect or client conversation this week to start a people-decisions discussion.`,
+        `CTA: ${b.suggestedCTA}.`
+      ].join('\n');
+  }
+}
