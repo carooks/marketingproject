@@ -1084,10 +1084,14 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   background: linear-gradient(180deg, var(--brand-50), var(--surface));
 }
 .chaddy-avatar {
-  width: 38px; height: 38px; border-radius: 10px;
+  width: 38px; height: 38px; border-radius: 50%;
   background: var(--brand-grad); color: #fff;
   display: flex; align-items: center; justify-content: center;
   font-size: 18px; flex: 0 0 38px;
+  overflow: hidden;
+}
+.chaddy-avatar img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
 }
 .small { font-size: 12px; }
 

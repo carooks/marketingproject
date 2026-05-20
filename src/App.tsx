@@ -1138,7 +1138,9 @@ function ChaddyPanel({ onSendToPipeline }: { onSendToPipeline: (text: string, ti
   return (
     <aside className="chaddy-col">
       <div className="chaddy-head">
-        <div className="chaddy-avatar" aria-hidden>??</div>
+        <div className="chaddy-avatar" aria-hidden>
+          <img src="/chaddy.png" alt="" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+        </div>
         <div>
           <strong>Chaddy</strong>
           <div className="muted small">Brainstorm &amp; draft source content</div>
