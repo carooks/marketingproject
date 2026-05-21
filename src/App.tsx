@@ -173,266 +173,477 @@ export default function App() {
   const activeDraft = drafts.find((d) => d.formatId === activeTab) ?? null;
   const showWorkspace = loading || drafts.length > 0 || events.length > 0;
 
+  // --- v0.6 shell state ----------------------------------------------------
+  type ViewId = 'chat' | 'pipeline' | 'brand' | 'settings';
+  const [view, setView] = useState<ViewId>('chat');
+  const [showHelp, setShowHelp] = useState(false);
+  const [toasts, setToasts] = useState<Array<{ id: number; kind: 'success' | 'warn' | 'error' | 'info'; title?: string; body: string }>>([]);
+  function pushToast(t: { kind?: 'success' | 'warn' | 'error' | 'info'; title?: string; body: string }) {
+    const id = Date.now() + Math.random();
+    setToasts((prev) => [...prev, { id, kind: t.kind ?? 'info', title: t.title, body: t.body }]);
+    setTimeout(() => setToasts((prev) => prev.filter((x) => x.id !== id)), 4200);
+  }
+  function dismissToast(id: number) {
+    setToasts((prev) => prev.filter((x) => x.id !== id));
+  }
+
+  // Keyboard shortcuts (Cmd/Ctrl+K → search/help, ? → help, Esc → close)
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const inEditable =
+        target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || (target as HTMLElement).isContentEditable);
+      if (e.key === 'Escape') { setShowHelp(false); return; }
+      if (e.key === '?' && !inEditable) { e.preventDefault(); setShowHelp((v) => !v); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault(); setShowHelp(true); return;
+      }
+      // 1/2/3/4 for view switching
+      if (!inEditable && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (e.key === '1') setView('chat');
+        else if (e.key === '2') setView('pipeline');
+        else if (e.key === '3') setView('brand');
+        else if (e.key === '4') setView('settings');
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const VIEW_META: Record<ViewId, { eyebrow: string; title: string }> = {
+    chat:     { eyebrow: 'CHADDY', title: 'Brainstorm & draft source content' },
+    pipeline: { eyebrow: 'AGENT WORKSPACE', title: 'Repurpose into six channels' },
+    brand:    { eyebrow: 'CONTEXT', title: 'OneDigital brand & agent guardrails' },
+    settings: { eyebrow: 'SETTINGS', title: 'Prototype configuration' }
+  };
+
   return (
     <div className="app">
-      <header className="header">
-        <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden>1D</div>
-          <div>
-            <div className="brand-eyebrow">OneDigital · Marketing</div>
-            <h1>Content Repurposer</h1>
-            <p className="subtitle">
-              Chat with Chaddy to draft or upload a long-form post, then a team of six AI agents
-              repurposes it into LinkedIn, Twitter, email, sales one-pager, Instagram, and internal
-              comms — all in OneDigital voice. You review and approve; nothing publishes automatically.
-            </p>
-          </div>
-        </div>
-        <span className="badge">Prototype · v0.5 · brand-aligned</span>
-      </header>
+      <div className="shell">
+        <NavRail view={view} setView={setView} />
 
-      <BrandCard />
-      <ScopeCard />
-
-      <div className="split">
-        <ChaddyPanel
-          onSendToPipeline={(text, t) => {
-            setSource(text);
-            if (t) setTitle(t);
-            // scroll right side into view
-            setTimeout(() => {
-              document.getElementById('pipeline-col')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }, 50);
-          }}
-        />
-
-        <div className="pipeline-col" id="pipeline-col">
-      <section className="panel">
-        <div className="panel-header">
-          <h2>1. Source content</h2>
-          <div className="row">
-            <button className="link" onClick={loadSample} type="button">Load sample</button>
-            <button
-              className="link"
-              onClick={() => { setSource(''); setTitle(''); reset(); }}
-              type="button"
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-
-        <label className="field">
-          <span>Working title (optional)</span>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Why repurposing beats producing"
+        <main className="canvas">
+          <TopBar
+            meta={VIEW_META[view]}
+            counts={counts}
+            hasDrafts={drafts.length > 0}
+            onHelp={() => setShowHelp(true)}
           />
-        </label>
 
-        <label
-          className={`dropzone ${pdfStatus.state === 'parsing' ? 'parsing' : ''}`}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={onDropPdf}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/pdf,.pdf"
-            onChange={onPdfInputChange}
-            hidden
-          />
-          <div className="dropzone-icon" aria-hidden>📄</div>
-          <div className="dropzone-body">
-            {pdfStatus.state === 'parsing' && (
-              <>
-                <strong>Extracting text…</strong>
-                <span className="muted">{pdfStatus.name}</span>
-              </>
-            )}
-            {pdfStatus.state === 'ready' && (
-              <>
-                <strong>Loaded {pdfStatus.name}</strong>
-                <span className="muted">{pdfStatus.pages} page{pdfStatus.pages === 1 ? '' : 's'} · text below is editable</span>
-              </>
-            )}
-            {pdfStatus.state === 'error' && (
-              <>
-                <strong>Upload failed</strong>
-                <span className="muted">{pdfStatus.message}</span>
-              </>
-            )}
-            {pdfStatus.state === 'idle' && (
-              <>
-                <strong>Drop a PDF here, or click to browse</strong>
-                <span className="muted">Text-based PDFs only · scanned/image PDFs aren't OCR'd</span>
-              </>
-            )}
-          </div>
-          <button
-            type="button"
-            className="ghost"
-            onClick={(e) => { e.preventDefault(); fileInputRef.current?.click(); }}
-          >
-            {pdfStatus.state === 'ready' ? 'Replace' : 'Choose PDF'}
-          </button>
-        </label>
-
-        <label className="field">
-          <span>Blog post text</span>
-          <textarea
-            value={source}
-            onChange={(e) => { setSource(e.target.value); if (pdfStatus.state === 'ready') setPdfStatus({ state: 'idle' }); }}
-            placeholder="Paste the long-form blog post here, or upload a PDF above."
-            rows={10}
-          />
-          <small className="muted">
-            {source.trim() ? `${source.trim().split(/\s+/).length} words` : 'No content yet'}
-          </small>
-        </label>
-      </section>
-
-      <section className="panel">
-        <div className="panel-header">
-          <h2>2. Choose output formats</h2>
-          <span className="muted">{selected.size} selected · 1 agent per channel</span>
-        </div>
-        <div className="format-grid">
-          {FORMATS.map((f) => {
-            const on = selected.has(f.id);
-            return (
-              <button
-                key={f.id}
-                type="button"
-                className={`format-card ${on ? 'on' : ''}`}
-                onClick={() => toggleFormat(f.id)}
-                aria-pressed={on}
-              >
-                <div className="format-icon" aria-hidden>{f.icon}</div>
-                <div className="format-meta">
-                  <strong>{f.label}</strong>
-                  <span className="muted">{f.description}</span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="actions">
-          <button
-            className="primary"
-            disabled={loading || !source.trim() || selected.size === 0}
-            onClick={handleGenerate}
-            type="button"
-          >
-            {loading ? 'Agents working…' : drafts.length ? 'Re-run agents' : 'Run agents'}
-          </button>
-          {(drafts.length > 0 || events.length > 0) && !loading && (
-            <button className="ghost" onClick={reset} type="button">
-              Discard drafts
-            </button>
-          )}
-        </div>
-      </section>
-
-      {showWorkspace && (
-        <section className="panel">
-          <div className="panel-header">
-            <h2>3. Agent workspace</h2>
-            <div className="status-summary">
-              <span className="pill pill-pending">{counts.pending} pending</span>
-              <span className="pill pill-approved">{counts.approved} approved</span>
-              <span className="pill pill-changes">{counts.changes} changes requested</span>
-            </div>
-          </div>
-
-          <MetricsStrip drafts={drafts} />
-
-          <div className="agent-grid">
-            <div className="agent-board">
-              <DirectorCard
-                step={directorStep}
-                plan={directorPlan}
-                loading={loading}
+          {view === 'chat' && (
+            <div className="view view-chat">
+              <ChaddyPanel
+                fullWidth
+                onSendToPipeline={(text, t) => {
+                  setSource(text);
+                  if (t) setTitle(t);
+                  setView('pipeline');
+                  pushToast({ kind: 'success', title: 'Sent to pipeline', body: 'Source loaded — run the agents whenever you\u2019re ready.' });
+                }}
+                pushToast={pushToast}
               />
-              {Array.from(selected).map((id) => {
-                const f = FORMATS.find((x) => x.id === id)!;
-                const step = channelStatus[id];
-                const draft = drafts.find((d) => d.formatId === id);
-                return (
-                  <AgentCard
-                    key={id}
-                    label={f.label}
-                    icon={f.icon}
-                    step={step}
-                    hasDraft={!!draft}
-                    active={activeTab === id}
-                    onOpen={() => draft && setActiveTab(id)}
-                  />
-                );
-              })}
             </div>
-
-            <ActivityLog events={events} logRef={logRef} />
-          </div>
-
-          {coherence && <CoherenceCard report={coherence} />}
-
-          {drafts.length > 0 && (
-            <>
-              <div className="tabs">
-                {drafts.map((d) => {
-                  const f = FORMATS.find((x) => x.id === d.formatId)!;
-                  return (
-                    <button
-                      key={d.formatId}
-                      type="button"
-                      className={`tab status-${d.status} ${activeTab === d.formatId ? 'active' : ''}`}
-                      onClick={() => setActiveTab(d.formatId)}
-                    >
-                      <span aria-hidden>{f.icon}</span> {f.label}
-                      <span className={`dot dot-${d.status}`} aria-hidden />
-                    </button>
-                  );
-                })}
-              </div>
-
-              {activeDraft && (
-                <DraftEditor
-                  draft={activeDraft}
-                  onChange={(patch, auditAction) =>
-                    updateDraft(activeDraft.formatId, patch, auditAction)
-                  }
-                  onApprove={() => setStatus(activeDraft.formatId, 'approved')}
-                  onRequestChanges={() => setStatus(activeDraft.formatId, 'changes-requested')}
-                  onReset={() => setStatus(activeDraft.formatId, 'pending')}
-                />
-              )}
-
-              <ExportBar drafts={drafts} />
-            </>
           )}
-        </section>
-      )}
-        </div>
-      </div>
 
-      <footer className="footer muted">
-        Powered by a mock LLM provider for the prototype. Swap{' '}
-        <code>MockLLMProvider</code> for <code>AzureOpenAIProvider</code> in{' '}
-        <code>src/llm.ts</code> to run on a real model — no other code changes.
-        Drafts are never auto-published; approval is required for every channel.
-      </footer>
+          {view === 'pipeline' && (
+            <div className="view">
+              {!showWorkspace && !source.trim() && <EmptyHero onSample={loadSample} onChat={() => setView('chat')} />}
+
+              <section className="panel">
+                <div className="panel-header">
+                  <h2>{Icons.fileText()} Source content</h2>
+                  <div className="row">
+                    <button className="link" onClick={loadSample} type="button">Load sample</button>
+                    <button
+                      className="link"
+                      onClick={() => { setSource(''); setTitle(''); reset(); }}
+                      type="button"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+
+                <label className="field">
+                  <span>Working title (optional)</span>
+                  <input
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="e.g. Why repurposing beats producing"
+                  />
+                </label>
+
+                <label
+                  className={`dropzone ${pdfStatus.state === 'parsing' ? 'parsing' : ''}`}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={onDropPdf}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={onPdfInputChange}
+                    hidden
+                  />
+                  <div className="dropzone-icon" aria-hidden>{Icons.upload()}</div>
+                  <div className="dropzone-body">
+                    {pdfStatus.state === 'parsing' && (
+                      <>
+                        <strong>Extracting text\u2026</strong>
+                        <span className="muted">{pdfStatus.name}</span>
+                      </>
+                    )}
+                    {pdfStatus.state === 'ready' && (
+                      <>
+                        <strong>Loaded {pdfStatus.name}</strong>
+                        <span className="muted">{pdfStatus.pages} page{pdfStatus.pages === 1 ? '' : 's'} \u00b7 text below is editable</span>
+                      </>
+                    )}
+                    {pdfStatus.state === 'error' && (
+                      <>
+                        <strong>Upload failed</strong>
+                        <span className="muted">{pdfStatus.message}</span>
+                      </>
+                    )}
+                    {pdfStatus.state === 'idle' && (
+                      <>
+                        <strong>Drop a PDF here, or click to browse</strong>
+                        <span className="muted">Text-based PDFs only \u00b7 scanned/image PDFs aren\u2019t OCR\u2019d</span>
+                      </>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={(e) => { e.preventDefault(); fileInputRef.current?.click(); }}
+                  >
+                    {pdfStatus.state === 'ready' ? 'Replace' : 'Choose PDF'}
+                  </button>
+                </label>
+
+                <label className="field">
+                  <span>Blog post text</span>
+                  <textarea
+                    value={source}
+                    onChange={(e) => { setSource(e.target.value); if (pdfStatus.state === 'ready') setPdfStatus({ state: 'idle' }); }}
+                    placeholder="Paste the long-form blog post here, or upload a PDF above."
+                    rows={10}
+                  />
+                  <small className="muted">
+                    {source.trim() ? `${source.trim().split(/\s+/).length} words` : 'No content yet'}
+                  </small>
+                </label>
+              </section>
+
+              <section className="panel">
+                <div className="panel-header">
+                  <h2>{Icons.layers()} Output formats</h2>
+                  <span className="muted">{selected.size} selected \u00b7 1 agent per channel</span>
+                </div>
+                <div className="format-grid">
+                  {FORMATS.map((f) => {
+                    const on = selected.has(f.id);
+                    return (
+                      <button
+                        key={f.id}
+                        type="button"
+                        className={`format-card ${on ? 'on' : ''}`}
+                        onClick={() => toggleFormat(f.id)}
+                        aria-pressed={on}
+                        data-channel={f.id}
+                      >
+                        <div className="format-icon" aria-hidden>{f.icon}</div>
+                        <div className="format-meta">
+                          <strong>{f.label}</strong>
+                          <span className="muted">{f.description}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="actions">
+                  <button
+                    className="primary"
+                    disabled={loading || !source.trim() || selected.size === 0}
+                    onClick={handleGenerate}
+                    type="button"
+                  >
+                    {loading ? 'Agents working\u2026' : drafts.length ? 'Re-run agents' : `\u2728 Run ${selected.size} agent${selected.size === 1 ? '' : 's'}`}
+                  </button>
+                  {(drafts.length > 0 || events.length > 0) && !loading && (
+                    <button className="ghost" onClick={reset} type="button">
+                      Discard drafts
+                    </button>
+                  )}
+                </div>
+              </section>
+
+              {showWorkspace && (
+                <section className="panel">
+                  <div className="panel-header">
+                    <h2>{Icons.cpu()} Agent workspace</h2>
+                    <div className="status-summary">
+                      <span className="pill pill-pending">{counts.pending} pending</span>
+                      <span className="pill pill-approved">{counts.approved} approved</span>
+                      <span className="pill pill-changes">{counts.changes} changes</span>
+                    </div>
+                  </div>
+
+                  <MetricsStrip drafts={drafts} />
+
+                  <div className="agent-grid">
+                    <div className="agent-board">
+                      <DirectorCard step={directorStep} plan={directorPlan} loading={loading} />
+                      {Array.from(selected).map((id) => {
+                        const f = FORMATS.find((x) => x.id === id)!;
+                        const step = channelStatus[id];
+                        const draft = drafts.find((d) => d.formatId === id);
+                        return (
+                          <AgentCard
+                            key={id}
+                            label={f.label}
+                            icon={f.icon}
+                            channelId={f.id}
+                            step={step}
+                            hasDraft={!!draft}
+                            active={activeTab === id}
+                            onOpen={() => draft && setActiveTab(id)}
+                          />
+                        );
+                      })}
+                    </div>
+
+                    <ActivityLog events={events} logRef={logRef} />
+                  </div>
+
+                  {coherence && <CoherenceCard report={coherence} />}
+
+                  {drafts.length > 0 && (
+                    <>
+                      <div className="tabs">
+                        {drafts.map((d) => {
+                          const f = FORMATS.find((x) => x.id === d.formatId)!;
+                          return (
+                            <button
+                              key={d.formatId}
+                              type="button"
+                              className={`tab status-${d.status} ${activeTab === d.formatId ? 'active' : ''}`}
+                              onClick={() => setActiveTab(d.formatId)}
+                              data-channel={d.formatId}
+                            >
+                              <span aria-hidden>{f.icon}</span> {f.label}
+                              <span className={`dot dot-${d.status}`} aria-hidden />
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {activeDraft && (
+                        <DraftEditor
+                          draft={activeDraft}
+                          onChange={(patch, auditAction) =>
+                            updateDraft(activeDraft.formatId, patch, auditAction)
+                          }
+                          onApprove={() => { setStatus(activeDraft.formatId, 'approved'); pushToast({ kind: 'success', title: 'Approved', body: `${FORMATS.find(f=>f.id===activeDraft.formatId)?.label} draft approved.` }); }}
+                          onRequestChanges={() => { setStatus(activeDraft.formatId, 'changes-requested'); pushToast({ kind: 'warn', title: 'Changes requested', body: 'The draft is marked for revision.' }); }}
+                          onReset={() => setStatus(activeDraft.formatId, 'pending')}
+                          onExportToast={(label) => pushToast({ kind: 'success', title: 'PDF exported', body: `${label} downloaded.` })}
+                        />
+                      )}
+
+                      <ExportBar drafts={drafts} onToast={pushToast} />
+                    </>
+                  )}
+                </section>
+              )}
+            </div>
+          )}
+
+          {view === 'brand' && (
+            <div className="view">
+              <BrandCard />
+              <ScopeCard />
+            </div>
+          )}
+
+          {view === 'settings' && (
+            <div className="view">
+              <section className="panel">
+                <div className="panel-header">
+                  <h2>{Icons.settings()} Prototype configuration</h2>
+                </div>
+                <p className="muted" style={{ lineHeight: 1.6 }}>
+                  Powered by a mock LLM provider for the prototype. Swap{' '}
+                  <code>MockLLMProvider</code> for <code>AzureOpenAIProvider</code> in{' '}
+                  <code>src/llm.ts</code> to run on a real model \u2014 no other code changes.
+                  Drafts are never auto-published; approval is required for every channel.
+                </p>
+                <div className="help-grid" style={{ marginTop: 12 }}>
+                  <span className="help-key">1 / 2 / 3 / 4</span><span>Switch views (Chat / Pipeline / Brand / Settings)</span>
+                  <span className="help-key">?</span><span>Open keyboard shortcuts</span>
+                  <span className="help-key">Ctrl/\u2318 + K</span><span>Open shortcuts</span>
+                  <span className="help-key">Enter</span><span>Send message in Chaddy</span>
+                  <span className="help-key">Shift + Enter</span><span>New line in Chaddy</span>
+                  <span className="help-key">Esc</span><span>Close any overlay</span>
+                </div>
+              </section>
+            </div>
+          )}
+        </main>
+
+        {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
+        <ToastStack toasts={toasts} onDismiss={dismissToast} />
+      </div>
     </div>
   );
 }
 
+// --- Shell components -------------------------------------------------------
+
+function NavRail({ view, setView }: { view: 'chat' | 'pipeline' | 'brand' | 'settings'; setView: (v: 'chat' | 'pipeline' | 'brand' | 'settings') => void }) {
+  const items: Array<{ id: typeof view; label: string; icon: JSX.Element }> = [
+    { id: 'chat',     label: 'Chat with Chaddy',  icon: Icons.message() },
+    { id: 'pipeline', label: 'Agent pipeline',    icon: Icons.workflow() },
+    { id: 'brand',    label: 'Brand & context',   icon: Icons.palette() },
+    { id: 'settings', label: 'Settings',          icon: Icons.settings() }
+  ];
+  return (
+    <nav className="nav-rail" aria-label="Primary navigation">
+      <div className="nav-brand" title="OneDigital">
+        {Icons.spark()}
+      </div>
+      <div className="nav-rail-divider" />
+      {items.map((it) => (
+        <button
+          key={it.id}
+          type="button"
+          className={`nav-item ${view === it.id ? 'active' : ''}`}
+          onClick={() => setView(it.id)}
+          aria-label={it.label}
+          aria-current={view === it.id ? 'page' : undefined}
+        >
+          {it.icon}
+          <span className="nav-tooltip">{it.label}</span>
+        </button>
+      ))}
+      <div className="nav-rail-spacer" />
+    </nav>
+  );
+}
+
+function TopBar({ meta, counts, hasDrafts, onHelp }: {
+  meta: { eyebrow: string; title: string };
+  counts: { pending: number; approved: number; changes: number };
+  hasDrafts: boolean;
+  onHelp: () => void;
+}) {
+  return (
+    <header className="topbar">
+      <div className="topbar-title">
+        <span className="eyebrow">{meta.eyebrow}</span>
+        <h1>{meta.title}</h1>
+      </div>
+      <div className="topbar-status">
+        {hasDrafts && (
+          <>
+            <span className="pill pill-pending">{counts.pending} pending</span>
+            <span className="pill pill-approved">{counts.approved} approved</span>
+            {counts.changes > 0 && <span className="pill pill-changes">{counts.changes} changes</span>}
+          </>
+        )}
+      </div>
+      <div className="topbar-actions">
+        <button type="button" className="icon-btn" onClick={onHelp} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
+          {Icons.help()}
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function EmptyHero({ onSample, onChat }: { onSample: () => void; onChat: () => void }) {
+  return (
+    <div className="empty-hero">
+      <h2>{Icons.spark()} One idea \u2192 six channels, in minutes.</h2>
+      <p>Chat with Chaddy to draft, or paste source content below. A team of six AI agents reviews and rewrites it for LinkedIn, X, email, sales, Instagram, and internal comms \u2014 with brand guardrails and a human-in-the-loop approval step on every draft.</p>
+      <div className="empty-steps">
+        <div className="empty-step"><span className="empty-step-num">1</span><strong>Draft or upload</strong><span>Chat with Chaddy or paste a long-form post / upload a PDF.</span></div>
+        <div className="empty-step"><span className="empty-step-num">2</span><strong>Agents repurpose</strong><span>Director plans \u2192 6 channel agents draft \u2192 critic, reviser, coherence check.</span></div>
+        <div className="empty-step"><span className="empty-step-num">3</span><strong>Review & export</strong><span>Approve each channel and download a branded PDF package.</span></div>
+      </div>
+      <div className="empty-cta">
+        <button type="button" className="primary" onClick={onSample}>{Icons.spark()} Try a sample brief</button>
+        <button type="button" className="ghost" onClick={onChat}>{Icons.message()} Chat with Chaddy first</button>
+      </div>
+    </div>
+  );
+}
+
+function ToastStack({ toasts, onDismiss }: { toasts: Array<{ id: number; kind: 'success' | 'warn' | 'error' | 'info'; title?: string; body: string }>; onDismiss: (id: number) => void }) {
+  return (
+    <div className="toast-stack" aria-live="polite" aria-atomic="false">
+      {toasts.map((t) => (
+        <div key={t.id} className={`toast toast-${t.kind}`} role="status">
+          <span className="toast-icon" aria-hidden>
+            {t.kind === 'success' ? Icons.check() : t.kind === 'warn' ? Icons.alert() : t.kind === 'error' ? Icons.x() : Icons.info()}
+          </span>
+          <div className="toast-body">
+            {t.title && <strong>{t.title}</strong>}
+            {t.body}
+          </div>
+          <button type="button" className="toast-close" onClick={() => onDismiss(t.id)} aria-label="Dismiss">\u00d7</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function HelpOverlay({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="help-overlay" onClick={onClose}>
+      <div className="help-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+        <h3>{Icons.help()} Keyboard shortcuts</h3>
+        <div className="help-grid">
+          <span className="help-key">1 / 2 / 3 / 4</span><span>Switch views</span>
+          <span className="help-key">?</span><span>Toggle this overlay</span>
+          <span className="help-key">Ctrl/\u2318 + K</span><span>Open shortcuts</span>
+          <span className="help-key">Enter</span><span>Send message (Chaddy)</span>
+          <span className="help-key">Shift + Enter</span><span>New line</span>
+          <span className="help-key">Esc</span><span>Close overlay</span>
+        </div>
+        <button type="button" className="ghost" onClick={onClose}>Close</button>
+      </div>
+    </div>
+  );
+}
+
+// --- Icon set (inline SVG, lucide-style) -----------------------------------
+const Icons = {
+  spark:    () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v3M12 18v3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M3 12h3M18 12h3M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg>,
+  message:  () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
+  workflow: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M9 6h6a3 3 0 0 1 3 3v6"/></svg>,
+  palette:  () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2a10 10 0 1 0 10 10c0-1.5-.8-2-2-2h-2a3 3 0 0 1 0-6h0a2 2 0 0 0 2-2A8 8 0 0 0 12 2z"/></svg>,
+  settings: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+  help:     () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+  fileText: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>,
+  upload:   () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
+  layers:   () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>,
+  cpu:      () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>,
+  check:    () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
+  alert:    () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+  x:        () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  info:     () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>,
+  send:     () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
+  paperclip:() => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>,
+  download: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+};
+
 // --- subcomponents ----------------------------------------------------------
 
 function AgentCard({
-  label, icon, step, hasDraft, active, onOpen
+  label, icon, step, hasDraft, active, onOpen, channelId
 }: {
   label: string;
   icon: string;
@@ -440,6 +651,7 @@ function AgentCard({
   hasDraft: boolean;
   active: boolean;
   onOpen: () => void;
+  channelId?: string;
 }) {
   const isWorking = !!step && !['queued', 'done', 'error'].includes(step);
   return (
@@ -448,6 +660,7 @@ function AgentCard({
       className={`agent-card step-${step ?? 'idle'} ${active ? 'active' : ''}`}
       onClick={onOpen}
       disabled={!hasDraft}
+      data-channel={channelId}
     >
       <div className="agent-card-head">
         <span className="agent-card-icon" aria-hidden>{icon}</span>
@@ -621,10 +834,11 @@ interface EditorProps {
   onApprove: () => void;
   onRequestChanges: () => void;
   onReset: () => void;
+  onExportToast?: (label: string) => void;
 }
 
 function DraftEditor({
-  draft, onChange, onApprove, onRequestChanges, onReset
+  draft, onChange, onApprove, onRequestChanges, onReset, onExportToast
 }: EditorProps) {
   const def = FORMATS.find((f) => f.id === draft.formatId)!;
   const [showTrace, setShowTrace] = useState(false);
@@ -737,7 +951,7 @@ function DraftEditor({
         <button
           className="ghost"
           type="button"
-          onClick={() => exportDraftToPdf(draft)}
+          onClick={() => { exportDraftToPdf(draft); onExportToast?.(FORMATS.find(f=>f.id===draft.formatId)?.label || 'Draft'); }}
         >
           ⬇ Export PDF
         </button>
@@ -840,7 +1054,7 @@ function chipClass(s: ApprovalStatus) {
   return s === 'approved' ? 'approved' : s === 'changes-requested' ? 'changes' : 'pending';
 }
 
-function ExportBar({ drafts }: { drafts: Draft[] }) {
+function ExportBar({ drafts, onToast }: { drafts: Draft[]; onToast?: (t: { kind?: 'success'|'warn'|'error'|'info'; title?: string; body: string }) => void }) {
   const approved = drafts.filter((d) => d.status === 'approved');
   function exportApprovedJson() {
     const payload = { exportedAt: new Date().toISOString(), drafts: approved };
@@ -863,7 +1077,7 @@ function ExportBar({ drafts }: { drafts: Draft[] }) {
           type="button"
           className="ghost"
           disabled={approved.length === 0}
-          onClick={exportApprovedJson}
+          onClick={() => { exportApprovedJson(); onToast?.({ kind: 'success', title: 'JSON exported', body: `${approved.length} approved draft${approved.length === 1 ? '' : 's'} downloaded.` }); }}
         >
           .json
         </button>
@@ -871,7 +1085,7 @@ function ExportBar({ drafts }: { drafts: Draft[] }) {
           type="button"
           className="primary"
           disabled={approved.length === 0}
-          onClick={() => exportPackageToPdf(approved)}
+          onClick={() => { exportPackageToPdf(approved); onToast?.({ kind: 'success', title: 'Package exported', body: `${approved.length} approved draft${approved.length === 1 ? '' : 's'} compiled into a PDF.` }); }}
         >
           ⬇ Export approved package (PDF)
         </button>
@@ -885,7 +1099,7 @@ function ScopeCard() {
   return (
     <div className={`scope-card ${open ? 'open' : ''}`}>
       <button type="button" className="scope-toggle" onClick={() => setOpen(v => !v)}>
-        <span>?? What this agent will and won''t do</span>
+        <span>🔍 What this agent will and won’t do</span>
         <span className="scope-chev">{open ? '?' : '?'}</span>
       </button>
       {open && (
@@ -958,7 +1172,7 @@ function BrandCard() {
   return (
     <div className={`brand-card ${open ? 'open' : ''}`}>
       <button type="button" className="brand-toggle" onClick={() => setOpen(v => !v)}>
-        <span>?? OneDigital brand guidelines applied to every draft</span>
+        <span>🎨 OneDigital brand guidelines applied to every draft</span>
         <span className="brand-chev">{open ? '?' : '?'}</span>
       </button>
       {open && (
@@ -1026,7 +1240,7 @@ function pickExportSource(
   return null;
 }
 
-function ChaddyPanel({ onSendToPipeline }: { onSendToPipeline: (text: string, title?: string) => void }) {
+function ChaddyPanel({ onSendToPipeline, fullWidth, pushToast: _pushToast }: { onSendToPipeline: (text: string, title?: string) => void; fullWidth?: boolean; pushToast?: (t: { kind?: 'success'|'warn'|'error'|'info'; title?: string; body: string }) => void }) {
   const [messages, setMessages] = useState<ChaddyMessage[]>([
     {
       id: 'm0',
@@ -1135,8 +1349,14 @@ function ChaddyPanel({ onSendToPipeline }: { onSendToPipeline: (text: string, ti
     return { body, title: titleMatch?.[1] };
   }
 
+  const SUGGESTIONS = [
+    'Draft a LinkedIn post about AI in HR',
+    'Summarize the uploaded PDF in 3 bullets',
+    'Give me 3 angles for a thought-leadership piece',
+    'Write an email opener about benefits enrollment'
+  ];
   return (
-    <aside className="chaddy-col">
+    <aside className={`chaddy-col ${fullWidth ? 'chaddy-full' : ''}`}>
       <div className="chaddy-head">
         <div className="chaddy-avatar" aria-hidden>
           <img src="/chaddy.png" alt="" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
@@ -1147,6 +1367,14 @@ function ChaddyPanel({ onSendToPipeline }: { onSendToPipeline: (text: string, ti
         </div>
         <span className="pill pill-pending" style={{ marginLeft: 'auto' }}>Mock agent</span>
       </div>
+
+      {messages.length <= 1 && (
+        <div className="chip-row-suggested">
+          {SUGGESTIONS.map((s) => (
+            <button key={s} type="button" className="chip-suggested" onClick={() => setInput(s)}>{s}</button>
+          ))}
+        </div>
+      )}
 
       <div className="chaddy-messages" ref={scrollRef}>
         {messages.map((m) => {
@@ -1161,7 +1389,7 @@ function ChaddyPanel({ onSendToPipeline }: { onSendToPipeline: (text: string, ti
                   type="button"
                   onClick={() => onSendToPipeline(body, title)}
                 >
-                  ? Send to pipeline
+                  → Send to pipeline
                 </button>
               )}
             </div>
@@ -1234,7 +1462,7 @@ function ChaddyPanel({ onSendToPipeline }: { onSendToPipeline: (text: string, ti
           rows={2}
         />
         <button className="primary" type="button" onClick={send} disabled={!input.trim() || thinking}>
-          {thinking ? '�' : 'Send'}
+          {thinking ? <span className="chaddy-typing-inline"><span/><span/><span/></span> : Icons.send()}
         </button>
       </div>
     </aside>
